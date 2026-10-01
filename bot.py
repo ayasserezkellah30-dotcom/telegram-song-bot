@@ -1,8 +1,8 @@
 import os
+import io
 import requests
 import threading
 import asyncio
-import io
 
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -38,7 +38,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🎵 أهلاً بك في بوت البحث عن الأغاني!\n\n"
-        "أرسل اسم الأغنية أو اسم الفنان للبحث.",
+        "اضغط على الزر بالأسفل ثم أرسل اسم الأغنية أو اسم الفنان.",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -57,9 +57,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "help":
         await query.message.reply_text(
             "ℹ️ طريقة الاستخدام:\n\n"
-            "1️⃣ أرسل اسم الأغنية أو الفنان\n"
-            "2️⃣ سأبحث عنها\n"
-            "3️⃣ إذا توفر Preview قانوني، سأرسله لك كملف صوتي 🎵"
+            "1️⃣ اضغط «🔎 البحث عن أغنية»\n"
+            "2️⃣ أرسل اسم الأغنية أو الفنان\n"
+            "3️⃣ سأرسل لك مقطع Preview ورابط الاستماع الرسمي 🎵"
         )
 
 
@@ -69,7 +69,7 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query:
         return
 
-    searching = await update.message.reply_text("🔎 جاري البحث...")
+    await update.message.reply_text("🔎 جاري البحث...")
 
     try:
         url = "https://itunes.apple.com/search"
@@ -82,32 +82,49 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
-
         data = response.json()
+
         results = data.get("results", [])
 
         if not results:
-            await searching.edit_text(
+            await update.message.reply_text(
                 "❌ لم أجد نتائج.\n"
                 "جرّب كتابة اسم الأغنية أو الفنان بطريقة مختلفة."
             )
             return
 
-        await searching.delete()
-
-        for i, song in enumerate(results, 1):
+        for song in results:
             name = song.get("trackName", "غير معروف")
             artist = song.get("artistName", "غير معروف")
             album = song.get("collectionName", "غير معروف")
-            preview_url = song.get("previewUrl")
-            track_url = song.get("trackViewUrl", "")
+            link = song.get("trackViewUrl", "")
+            preview_url = song.get("previewUrl", "")
+
+            keyboard = []
+
+            if link:
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            "🎧 الاستماع للأغنية كاملة",
+                            url=link
+                        )
+                    ]
+                )
+
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+
+            caption = (
+                f"🎵 {name}\n"
+                f"👤 الفنان: {artist}\n"
+                f"💿 الألبوم: {album}\n\n"
+            )
 
             if preview_url:
                 try:
                     audio_response = requests.get(
                         preview_url,
-                        timeout=30
+                        timeout=20
                     )
                     audio_response.raise_for_status()
 
@@ -118,29 +135,20 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         audio=audio_file,
                         title=name,
                         performer=artist,
-                        caption=(
-                            f"🎵 {name}\n"
-                            f"👤 الفنان: {artist}\n"
-                            f"💿 الألبوم: {album}\n\n"
-                            f"ℹ️ هذا مقطع Preview متاح من iTunes."
-                        )
+                        caption=caption + "ℹ️ هذا مقطع Preview قصير من iTunes.",
+                        reply_markup=reply_markup,
                     )
 
                 except Exception:
                     await update.message.reply_text(
-                        f"🎵 {i}. {name}\n"
-                        f"👤 الفنان: {artist}\n"
-                        f"💿 الألبوم: {album}\n"
-                        f"🔗 {track_url}"
+                        caption + "ℹ️ المقطع الصوتي غير متاح حاليًا.",
+                        reply_markup=reply_markup,
                     )
 
             else:
                 await update.message.reply_text(
-                    f"🎵 {i}. {name}\n"
-                    f"👤 الفنان: {artist}\n"
-                    f"💿 الألبوم: {album}\n"
-                    f"🔗 {track_url}\n\n"
-                    f"⚠️ لا يتوفر Preview لهذه النتيجة."
+                    caption + "ℹ️ لا يوجد Preview متاح لهذه الأغنية.",
+                    reply_markup=reply_markup,
                 )
 
     except Exception as e:
@@ -157,10 +165,7 @@ async def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", start))
-
-    application.add_handler(
-        CallbackQueryHandler(button_handler)
-    )
+    application.add_handler(CallbackQueryHandler(button_handler))
 
     application.add_handler(
         MessageHandler(
